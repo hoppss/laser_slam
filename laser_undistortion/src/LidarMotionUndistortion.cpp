@@ -7,9 +7,9 @@
 
 #include <champion_nav_msgs/ChampionNavLaserScan.h>
 
-#include <pcl-1.7/pcl/point_cloud.h>
+#include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl-1.7/pcl/visualization/cloud_viewer.h>
+#include <pcl/visualization/cloud_viewer.h>
 
 #include <iostream>
 #include <dirent.h>
@@ -50,8 +50,8 @@ public:
 
         // 将数据复制出来
         std::vector<double> angles,ranges;
-        for(int i = beamNum - 1; i > 0;i--)
-        {   
+        for(int i = beamNum - 1; i > 0;i--) //为什么要倒序？
+        {
             double lidar_dist = laserScanMsg.ranges[i];
             double lidar_angle = laserScanMsg.angles[i];
 
@@ -64,10 +64,9 @@ public:
 
         //转换为pcl::pointcloud for visuailization
 
-        tf::Stamped<tf::Pose> visualPose;
-        if(!getLaserPose(visualPose, startTime, tf_))
+        tf::Stamped<tf::Pose> visualPose;             //laser pose in odom frame
+        if(!getLaserPose(visualPose, startTime, tf_)) //获得startTime 时的pose，不怕抛异常吗
         {
-
             ROS_WARN("Not visualPose,Can not Calib");
             return ;
         }
@@ -82,15 +81,15 @@ public:
                 continue;
 
             double x = ranges[i] * cos(angles[i]);
-            double y = ranges[i] * sin(angles[i]);
+            double y = ranges[i] * sin(angles[i]);// laser point(x,y) coord  in laser frame
 
-            pcl::PointXYZRGB pt;
+            pcl::PointXYZRGB pt;                  //laser point in odom frame
             pt.x = x * cos(visualYaw) - y * sin(visualYaw) + visualPose.getOrigin().getX();
             pt.y = x * sin(visualYaw) + y * cos(visualYaw) + visualPose.getOrigin().getY();
             pt.z = 1.0;
 
             // pack r/g/b into rgb
-            unsigned char r = 255, g = 0, b = 0;    //red color
+            unsigned char r = 255, g = 0, b = 0;    //red color mark original data
             unsigned int rgb = ((unsigned int)r << 16 | (unsigned int)g << 8 | (unsigned int)b);
             pt.rgb = *reinterpret_cast<float*>(&rgb);
 
@@ -109,7 +108,6 @@ public:
         //转换为pcl::pointcloud for visuailization
         for(int i = 0; i < ranges.size();i++)
         {
-
             if(ranges[i] < 0.05 || std::isnan(ranges[i]) || std::isinf(ranges[i]))
                 continue;
 
@@ -139,7 +137,7 @@ public:
      * @brief 得到机器人在里程计坐标系中的位姿tf::Pose
      *        得到dt时刻激光雷达在odom坐标系的位姿
      * @param odom_pos  机器人的位姿
-     * @param dt        dt时刻
+     * @param dt        dt时刻， startScanTime
      * @param tf_
     */
     bool getLaserPose(tf::Stamped<tf::Pose> &odom_pose,
@@ -150,18 +148,23 @@ public:
 
         tf::Stamped < tf::Pose > robot_pose;
         robot_pose.setIdentity();
-        robot_pose.frame_id_ = "base_laser";
+        robot_pose.frame_id_ = "base_laser";  //必须设置，因为要获得base_laser 在odom下的pose
         robot_pose.stamp_ = dt;   //设置为ros::Time()表示返回最近的转换关系
 
         // get the global pose of the robot
         try
         {
-            if(!tf_->waitForTransform("/odom", "/base_laser", dt, ros::Duration(0.5)))             // 0.15s 的时间可以修改
-            {
-                ROS_ERROR("LidarMotion-Can not Wait Transform()");
-                return false;
-            }
-            tf_->transformPose("/odom", robot_pose, odom_pose);
+          //Block until a transform is possible or it times out.
+          //当时间使用now()或者某个时刻，需要结合waitForTransform使用；等到标记时刻dt后首个有效的变换
+          // 0.15s 的时间可以修改
+          //默认认为odom->laser 频率高，误差忽略
+          if (!tf_->waitForTransform("/odom", "/base_laser", dt, ros::Duration(0.15)))
+          {
+            ROS_ERROR("LidarMotion-Can not Wait Transform()");
+            return false;
+          }
+          //等到有效变化后，完成矩阵变换
+          tf_->transformPose("/odom", robot_pose, odom_pose); //odom:target frame;    //odom_pose 输出
         }
         catch (tf::LookupException& ex)
         {
@@ -187,7 +190,7 @@ public:
      * @brief Lidar_MotionCalibration
      *        激光雷达运动畸变去除分段函数;
      *        在此分段函数中，认为机器人是匀速运动；
-     * @param frame_base_pose       标定完毕之后的基准坐标系
+     * @param frame_base_pose       标定完毕之后的基准坐标系,雷达startTime 时的位姿
      * @param frame_start_pose      本分段第一个激光点对应的位姿
      * @param frame_end_pose        本分段最后一个激光点对应的位姿
      * @param ranges                激光数据－－距离
@@ -233,13 +236,13 @@ public:
         tf::Vector3 mid_point;
 
         double lidar_angle, lidar_dist;
-        //插值计算出来每个点对应的位姿
+        //插值计算出来每个激光点 对应 激光在odom中的位姿
         for(int i = 0; i< beam_number;i++)
         {
-            //角度插值
+            //角度插值, 四元数插值 - 球面线性插值
             mid_angle =  tf::getYaw(start_angle_q.slerp(end_angle_q, beam_step * i));
 
-            //线性插值
+            //线性插值, 分别对x,y取线性插值，因为z无关，所以前面把z改为0
             mid_pos = start_pos.lerp(end_pos, beam_step * i);
 
             //得到激光点在odom 坐标系中的坐标 根据
@@ -267,7 +270,7 @@ public:
                 //转换到类型中去
                 mid_point.setValue(odom_x, odom_y, 0);
 
-                //把在odom坐标系中的激光数据点 转换到 基础坐标系
+                //把在odom坐标系中的激光数据点 转换到 基础坐标系,（所有点云转换到开始第一个点时odom位姿）
                 double x0,y0,a0,s,c;
                 x0 = base_pos.x();
                 y0 = base_pos.y();
@@ -282,7 +285,7 @@ public:
                  *               -s c x0*s - y0*c;
                  *                0 0 1]代数余子式取逆
                  */
-                double tmp_x,tmp_y;
+                double tmp_x,tmp_y;   //base 坐标系下第一个点scanTime 坐标系下 ranges，angles
                 tmp_x =  mid_point.x()*c  + mid_point.y()*s - x0*c - y0*s;
                 tmp_y = -mid_point.x()*s  + mid_point.y()*c  + x0*s - y0*c;
                 mid_point.setValue(tmp_x,tmp_y,0);
@@ -316,7 +319,10 @@ public:
        //end of TODO
         }
     }
-    //激光雷达数据　分段线性进行插值　分段的周期为10ms
+    //激光雷达数据　分段线性进行插值　分段时间5ms??   分段的目的是认为雷达在短时间是匀速运动
+    //这5ms 是基于odom >= 200 hz
+    //分段函数用来二次曲线近似
+    //首先每5ms odom 之间插值； 然后每个5ms的点云激光点之间插值
     //这里会调用Lidar_MotionCalibration()
     /**
      * @name Lidar_Calibration()
@@ -341,7 +347,7 @@ public:
             return ;
         }
 
-        // 5ms来进行分段
+        // 5ms来进行分段, * 1000 us -> ms
         int interpolation_time_duration = 5 * 1000;
 
         tf::Stamped<tf::Pose> frame_start_pose;
@@ -361,7 +367,7 @@ public:
         //所有的激光点的基准位姿都会改成我们的base_pose
         // ROS_INFO("get start pose");
 
-        if(!getLaserPose(frame_start_pose, ros::Time(start_time /1000000.0), tf_))
+        if(!getLaserPose(frame_start_pose, ros::Time(start_time /1000000.0), tf_))// 除以1000000 只是转换成s
         {
             ROS_WARN("Not Start Pose,Can not Calib");
             return ;
@@ -380,9 +386,9 @@ public:
         {
             //分段线性,时间段的大小为interpolation_time_duration
             double mid_time = start_time + time_inc * (i - start_index);
-            if(mid_time - start_time > interpolation_time_duration || (i == beamNumber - 1))
+            if(mid_time - start_time > interpolation_time_duration || (i == beamNumber - 1)) //找到每个间隔了5ms的点和index
             {
-                cnt++;
+                cnt++;  //计数，有多少个中间点
 
                 //得到起点和终点的位姿
                 //终点的位姿
@@ -398,16 +404,16 @@ public:
 
                 Lidar_MotionCalibration(frame_base_pose,
                                         frame_start_pose,
-                                        frame_mid_pose,
+                                        frame_mid_pose,     //用于计算相对位姿，这期间认为是匀速运动
                                         ranges,
                                         angles,
-                                        start_index,
+                                        start_index,        //用于说明ranges中畸变矫正哪些点
                                         interp_count);
 
                 //更新时间
                 start_time = mid_time;
                 start_index = i;
-                frame_start_pose = frame_mid_pose;
+                frame_start_pose = frame_mid_pose;          //找下一个中间点
             }
         }
     }
