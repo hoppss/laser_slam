@@ -2,9 +2,7 @@
 #include <tf/tf.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
-
 #include <sensor_msgs/LaserScan.h>
-
 #include <champion_nav_msgs/ChampionNavLaserScan.h>
 
 #include <pcl/point_cloud.h>
@@ -73,6 +71,7 @@ public:
 
         double visualYaw = tf::getYaw(visualPose.getRotation());
 
+        //origin scan data
         visual_cloud_.clear();
         for(int i = 0; i < ranges.size();i++)
         {
@@ -360,14 +359,14 @@ public:
         double end_time = endTime.toSec() * 1000 * 1000;
         double time_inc = (end_time - start_time) / beamNumber; // 每束激光数据的时间间隔
 
-        //当前插值的段的起始坐标
+        //当前插值的段的起始索引
         int start_index = 0;
 
         //起始点的位姿 这里要得到起始点位置的原因是　起始点就是我们的base_pose
         //所有的激光点的基准位姿都会改成我们的base_pose
         // ROS_INFO("get start pose");
 
-        if(!getLaserPose(frame_start_pose, ros::Time(start_time /1000000.0), tf_))// 除以1000000 只是转换成s
+        if(!getLaserPose(frame_start_pose, ros::Time(start_time /1000000.0), tf_))// 除以1000000 只是转换成s， e6
         {
             ROS_WARN("Not Start Pose,Can not Calib");
             return ;
